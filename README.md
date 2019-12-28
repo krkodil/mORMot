@@ -1,4 +1,4 @@
-# moRMOt
+# mORMot
 Java client for Synopse mORMot server
 
 Java REST client for fantastic Synopse API, focused on Interface based services.
