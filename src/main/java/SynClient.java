@@ -19,7 +19,12 @@ public class SynClient {
     private String root;
     private RESTClient http;
 
-    private long sessionID;
+    private long userID;
+    private String logonDisplay;
+    private int timeout;
+    private String version;
+
+    private long sessionID = 0;
     private String passwordHashHexa = "";
     private String sessionIDHexa8 =  "";
     private long sessionPrivateKey  = 0;
@@ -64,7 +69,12 @@ public class SynClient {
     public void logout() throws Exception {
         String url = signUrl(root + "/auth?UserName="+ this.user + "&Session=" + this.sessionID);
         String response = http.doGet(url);
-        if (http.statusCode != HTTP_OK) {
+        if (http.statusCode == HTTP_OK) {
+            sessionID = 0;
+            passwordHashHexa = "";
+            sessionIDHexa8 =  "";
+            sessionPrivateKey  = 0;
+        } else {
             JSONObject json = new JSONObject(response);
             throw new SynException(json.getInt("errorCode"),
                     json.getString("errorText"));
@@ -97,7 +107,11 @@ public class SynClient {
     }
 
     private String padL(String s, int count) {
-        return String.format("%"+count+"s", s).replace(' ','0');
+        String result = String.format("%"+count+"s", s).replace(' ','0');
+        if (result.length() > count)
+            return  result.substring(result.length() - count);
+        else
+            return result;
     }
 
     private String binaryString(int i, int digits) {
@@ -148,37 +162,41 @@ public class SynClient {
         if (http.statusCode != HTTP_OK)
             throw new SynException(json.getInt("errorCode"), json.getString("errorText") );
 
-        String token = json.getString("result");
-        String nonce =  calcClientNonce();
+        String serverNonce = json.getString("result");
+        String clientNonce =  calcClientNonce();
         response =  http.doGet(root +"/auth"+
                  "?UserName="+ user +
-                 "&Password="+ SHA256(root + token + nonce + user + passwordHashHexa)+
-                 "&ClientNonce=" + nonce);
+                 "&Password="+ SHA256(root + serverNonce + clientNonce + user + passwordHashHexa)+
+                 "&ClientNonce=" + clientNonce);
 
         json = new JSONObject(response);
         if (http.statusCode != HTTP_OK)
            throw new SynException(json.getInt("errorCode"), json.getString("errorText") );
 
+        userID = json.getInt("logonid");
+        logonDisplay = json.getString("logondisplay");
+        version = json.getString("version");
+        timeout = json.getInt("timeout");
+        if (timeout == 0) timeout = 60;
+
         return gotSession(json.getString("result")) > 0;
     }
 
     private String signUrl(String url) {
-        long ticks = System.currentTimeMillis() - sessionTickCountOffset;
+        long ticks = System.currentTimeMillis() >> 8; // 256 ms resolution;
 
-        if(lastSessionTickCount == ticks)
-            ticks += 1;
+        if (lastSessionTickCount == ticks)
+            lastSessionTickCount += 1;
+        else
+            lastSessionTickCount = ticks;
 
-        lastSessionTickCount = ticks;
+        String nonce = padL(Long.toHexString(lastSessionTickCount), 8);
 
-        String nonce = padL(Long.toHexString(ticks), 8);
-        if (nonce.length() > 8)
-            nonce = nonce.substring(nonce.length() - 8);
+        long signature = CRC32.calculate(url, CRC32.calculate(nonce, sessionPrivateKey));
+        String sessionSignature = sessionIDHexa8 + nonce +padL(Long.toHexString(signature), 8);
 
-        long key = CRC32.calculate(url, CRC32.calculate(nonce, sessionPrivateKey));
-        String sesionKey = padL(Long.toHexString(key), 8);
-
-        url += url.contains("?") ? "&":"?";
-        return url + "session_signature=" + sessionIDHexa8 + nonce + sesionKey;
+        return url + (url.contains("?") ? "&session_signature=":
+                                          "?session_signature=") + sessionSignature;
     }
 
 }
