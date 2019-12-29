@@ -79,6 +79,7 @@ public class SynClient {
             throw new SynException(json.getInt("errorCode"),
                     json.getString("errorText"));
         }
+
     }
 
     private  String byteToHex(byte[] bts) {
